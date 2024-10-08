@@ -1,0 +1,83 @@
+docker network create \
+  --driver bridge \
+  --ipam-driver default \
+  --subnet  10.45.0.0/24 \
+  --opt com.docker.network.bridge.name=bridge_sdnet0 \
+  --opt com.docker.network.container_iface_prefix=sdnet0 \
+  sdnet0
+  
+  
+docker run -d --name=mysql \
+		   --network=sdnet0 \
+		   -v mysqldata:/var/lib/mysql \
+		   -e MYSQL_ROOT_PASSWORD=root \
+		   -e MYSQL_DATABASE=cacti \
+		   -e MYSQL_USER=cacti \
+		   -e MYSQL_PASSWORD=cacti \
+		   -v /home/k4/docker/cacti/mysql:/etc/mysql/conf.d \
+		   -p 3306:3306 \
+		   mysql:8.3
+		   
+#initial run for DB
+docker run -d --rm --name=cacti \
+		   --network=sdnet0 \
+		   -p 80:80 \
+		   -v cactirrd:/var/lib/cacti/rra \
+		   k4r/cacti:0.44 /bin/bash -c "./startup.sh -i"
+
+#other runs
+docker run -d --rm --name=cacti \
+		   --network=sdnet0 \
+		   -p 80:80 \
+		   -v cactirrd:/var/lib/cacti/rra \
+		   k4r/cacti:0.44  
+
+docker run -it --rm --name=cacti \
+		   --network=sdnet0 \
+		   -p 80:80 \
+		   -v /home/k4/docker/cacti/rrd:/var/lib/cacti/rra \
+		   k4r/cacti:0.4 bash
+
+#mysql --host=mysql --user=root -proot -e "CREATE DATABASE cacti;" && \
+#docker volume rm mysqldata
+
+
+FROM ubuntu:latest
+
+MAINTAINER k4
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt clean && apt -y update && \
+        apt install -y traceroute net-tools iputils-ping tcpdump vim && \
+        apt install -y --no-install-recommends apache2 cron && \
+        apt install -y --no-install-recommends php-intl
+
+RUN apt install -y --no-install-recommends cacti
+
+RUN chown -R www-data:www-data /usr/share/cacti/site/resource/snmp_queries/ && \
+    chown -R www-data:www-data /usr/share/cacti/site/resource/script_server/ && \
+    chown -R www-data:www-data /usr/share/cacti/site/resource/script_queries/ && \
+    chown -R www-data:www-data /usr/share/cacti/site/scripts/ && \
+    crontab -l | { cat; echo "*/1 * * * * /usr/bin/php /usr/share/cacti/site/poller.php > /dev/null 2>&1"; } | crontab -
+
+EXPOSE 80
+
+COPY startup.sh .
+COPY config.php /usr/share/cacti/site/include
+
+CMD ["/bin/bash","-c","./startup.sh"]
+
+
+#!/bin/bash
+
+if [ "$1" == "-i" ]; then
+    echo "Flag set";
+    mysql --host=mysql --user=root -proot -e "CREATE USER 'cacti'@'0.0.0.0' IDENTIFIED BY 'cacti';" && \
+	mysql --host=mysql --user=root -proot -e "GRANT ALL ON cacti.* TO 'cacti'@'0.0.0.0';" && \
+	mysql --host=mysql --user=root -proot cacti < /usr/share/doc/cacti/cacti.sql && \
+	mysql --host=mysql --user=root -proot -e "GRANT ALL PRIVILEGES ON mysql.time_zone_name TO 'cacti'@'%' WITH GRANT OPTION;FLUSH PRIVILEGES;"
+
+fi
+
+/usr/sbin/cron -f &
+/usr/sbin/apachectl -D FOREGROUND
