@@ -135,3 +135,5 @@ RUN apt clean && apt -y update && \
     cron -f
     crontab -l | { cat; echo "*/1 * * * * /usr/bin/php /usr/share/cacti/site/poller.php > /dev/null 2>&1
 "; } | crontab -
+
+#added from root@ubuntu-srv-1 192.168.3.154
